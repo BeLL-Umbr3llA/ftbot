@@ -1,55 +1,59 @@
 const Fotmob = require("fotmob").default;
-const mongoose = require("mongoose");
-const { Bot } = require("grammy");
 const fotmob = new Fotmob();
-const bot = new Bot(process.env.BOT_TOKEN);
+const { Bot } = require("grammy");
+const { connectDB, Match, User } = require("../db");
 
-// Schema Model ကို ဒီမှာလည်း ပြန်ခေါ်ပေးပါ (သို့မဟုတ် Models ခွဲထားပါ)
-const Match = mongoose.models.Match || mongoose.model("Match", matchSchema);
-const User = mongoose.models.User || mongoose.model("User", userSchema);
+const bot = new Bot(process.env.BOT_TOKEN);
 
 export default async function handler(req, res) {
     if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
-        return res.status(401).end();
+        return res.status(401).send("Unauthorized");
     }
 
-    try {
-        await mongoose.connect(process.env.MONGO_URI);
-        const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
-        const matches = await fotmob.getMatchesByDate(today);
+    await connectDB();
 
-        for (const league of matches.leagues) {
-            for (const m of league.matches) {
-                const fId = m.id;
-                const newScore = `${m.home.score}-${m.away.score}`;
-                const status = m.status.reasonShort || (m.status.liveTime ? m.status.liveTime : "NS");
+    // ၁။ Noti ယူထားတဲ့ User ရှိမရှိ အရင်စစ် (မရှိရင် API မခေါ်ဘူး)
+    const activeSubsCount = await User.countDocuments({ "subscriptions.0": { $exists: true } });
+    if (activeSubsCount === 0) return res.status(200).send("No active subs. Idle mode.");
 
-                // ၁။ Score ပြောင်းလဲမှုရှိမရှိ စစ်မယ်
-                const oldMatch = await Match.findOne({ fixtureId: fId });
-                if (oldMatch && oldMatch.score !== newScore && m.status.live) {
-                    const subs = await User.find({ subscriptions: fId });
-                    for (const u of subs) {
-                        await bot.api.sendMessage(u.userId, `⚽ *GOAL!* \n${m.home.name} ${newScore} ${m.away.name}\n🕒 ${status}`, { parse_mode: "Markdown" });
-                    }
+    const today = new Date().toLocaleDateString('en-CA').replace(/-/g, '');
+    const data = await fotmob.getMatchesByDate(today);
+
+    for (const league of data.leagues) {
+        for (const m of league.matches) {
+            const fId = m.id;
+            const currentScore = `${m.home.score}-${m.away.score}`;
+            const oldMatch = await Match.findOne({ fixtureId: fId });
+
+            // ၂။ Goal Notification logic
+            if (oldMatch && oldMatch.score !== currentScore && m.status.live) {
+                const subs = await User.find({ subscriptions: fId });
+                for (const u of subs) {
+                    await bot.api.sendMessage(u.userId, `⚽ *GOAL ALERT!*\n\n${m.home.name} ${currentScore} ${m.away.name}\n🕒 Time: ${m.status.liveTime}`);
                 }
-
-                // ၂။ Database ထဲမှာ Update လုပ်မယ်
-                await Match.findOneAndUpdate(
-                    { fixtureId: fId },
-                    {
-                        home: m.home.name,
-                        away: m.away.name,
-                        score: newScore,
-                        status: status,
-                        eventTime: m.status.utcTime,
-                        league: league.name
-                    },
-                    { upsert: true }
-                );
             }
+
+            // ၃။ ပွဲပြီးရင် Noti ပို့ပြီး User Sub ကို ဖျက်ခြင်း (Auto-Cleanup)
+            if (m.status.reasonShort === "FT") {
+                const subs = await User.find({ subscriptions: fId });
+                for (const u of subs) {
+                    await bot.api.sendMessage(u.userId, `🏁 *MATCH FINISHED*\n${m.home.name} ${currentScore} ${m.away.name}\n\nဒီပွဲအတွက် Noti ကို ပိတ်လိုက်ပါပြီဗျ။`);
+                    await User.updateOne({ userId: u.userId }, { $pull: { subscriptions: fId } });
+                }
+            }
+
+            // ၄။ DB Update
+            await Match.findOneAndUpdate(
+                { fixtureId: fId },
+                { 
+                    home: m.home.name, away: m.away.name, 
+                    league: league.name, score: currentScore, 
+                    status: m.status.live ? "Live" : m.status.reasonShort,
+                    lastUpdated: new Date() 
+                },
+                { upsert: true }
+            );
         }
-        res.status(200).send("Sync Complete");
-    } catch (err) {
-        res.status(500).json({ error: err.message });
     }
+    res.status(200).send("Sync & Cleaned");
 }
