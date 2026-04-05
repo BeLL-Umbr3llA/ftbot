@@ -1,8 +1,23 @@
 {
-  "crons": [
+  "version": 2,
+  "name": "football-noti-bot",
+  "builds": [
     {
-      "path": "/api/cron",
-      "schedule": "*/1 * * * *"
+      "src": "api/**/*.js",
+      "use": "@vercel/node"
     }
-  ]
+  ],
+  "routes": [
+    {
+      "src": "/api/index",
+      "dest": "api/index.js"
+    },
+    {
+      "src": "/api/cron",
+      "dest": "api/cron.js"
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  }
 }
