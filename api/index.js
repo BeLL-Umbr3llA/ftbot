@@ -43,8 +43,8 @@ bot.on("message:text", async (ctx) => {
     if (results.length > 0) {
         let m = results[0].item;
         
-        // Data Freshness Check: ၅ မိနစ်ထက် ကျော်နေရင် API ကနေ Update ယူမယ်
-        const isOld = (new Date() - new Date(m.lastUpdated)) > 5 * 60 * 1000;
+       // ၅ မိနစ် (5 * 60 * 1000) အစား ၁ မိနစ် (1 * 60 * 1000) လို့ ပြောင်းပါ
+        const isOld = (new Date() - new Date(m.lastUpdated)) > 1 * 60 * 1000;
         
         if (isOld) {
             try {
