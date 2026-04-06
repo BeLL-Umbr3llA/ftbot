@@ -67,19 +67,27 @@ bot.on("message:text", async (ctx) => {
     }
 });
 
-// /live command logic
 bot.command("live", async (ctx) => {
-    await connectDB();
-    const liveMatches = await Match.find({ status: "Live" });
-    if (liveMatches.length === 0) return ctx.reply("🏟️ လောလောဆယ် Live ပွဲစဉ်မရှိသေးပါဘူးဗျ။");
-    
-    let msg = "⚽ *LIVE SCORES*\n\n";
-    const keyboard = new InlineKeyboard();
-    liveMatches.slice(0, 8).forEach(m => {
-        msg += `• ${m.home} ${m.score} ${m.away}\n`;
-        keyboard.text(`🔔 ${m.home.substring(0,5)}`, `sub_${m.fixtureId}`);
-    });
-    ctx.reply(msg, { parse_mode: "Markdown", reply_markup: keyboard });
+    try {
+        await connectDB();
+        const liveMatches = await Match.find({ status: "Live" });
+        
+        if (liveMatches.length === 0) {
+            return ctx.reply("🏟️ လောလောဆယ် Live ပွဲစဉ်မရှိသေးပါဘူးဗျ။ တခြားအသင်းနာမည်တွေ ရိုက်ရှာကြည့်ပါဦး။");
+        }
+        
+        let msg = "⚽ *LIVE SCORES*\n\n";
+        const keyboard = new InlineKeyboard();
+        liveMatches.slice(0, 8).forEach(m => {
+            msg += `• ${m.home} ${m.score} ${m.away}\n`;
+            keyboard.text(`🔔 ${m.home.substring(0,5)}`, `sub_${m.fixtureId}`).row();
+        });
+        
+        ctx.reply(msg, { parse_mode: "Markdown", reply_markup: keyboard });
+    } catch (err) {
+        console.error(err);
+        ctx.reply("❌ Error: DB ချိတ်ဆက်မှု အဆင်မပြေပါဘူး။");
+    }
 });
 
 // Noti Subscribe Logic
