@@ -5,12 +5,42 @@ const { connectDB, Match, User } = require("../db");
 
 const bot = new Bot(process.env.BOT_TOKEN);
 
+// --- (၁) Commands အပိုင်းကို အပေါ်ဆုံးမှာ ထားရပါမယ် ---
+bot.command("live", async (ctx) => {
+    try {
+        await connectDB();
+        // DB ထဲမှာ Live ဖြစ်နေတာတွေကို အရင်ရှာမယ်
+        const liveMatches = await Match.find({ status: "Live" });
+        
+        if (liveMatches.length === 0) {
+            return ctx.reply("🏟️ လောလောဆယ် Live ပွဲစဉ်မရှိသေးပါဘူးဗျ။ တခြားအသင်းနာမည်တွေ ရိုက်ရှာကြည့်ပါဦး။");
+        }
+        
+        let msg = "⚽ *LIVE SCORES*\n\n";
+        const keyboard = new InlineKeyboard();
+        liveMatches.slice(0, 8).forEach(m => {
+            msg += `• ${m.home} ${m.score} ${m.away}\n`;
+            keyboard.text(`🔔 ${m.home.substring(0,5)}`, `sub_${m.fixtureId}`).row();
+        });
+        
+        ctx.reply(msg, { parse_mode: "Markdown", reply_markup: keyboard });
+    } catch (err) {
+        console.error(err);
+        ctx.reply("❌ Error: Live ပွဲစဉ်တွေ ဆွဲယူရာမှာ အဆင်မပြေဖြစ်သွားပါတယ်။");
+    }
+});
+
+bot.command("start", (ctx) => ctx.reply("မင်္ဂလာပါ! အသင်းနာမည်ရိုက်ပြီး ပွဲစဉ်ရှာနိုင်သလို /live command နဲ့လည်း လက်ရှိပွဲတွေကို ကြည့်နိုင်ပါတယ်ဗျ။"));
+
+// --- (၂) Search Logic (Message Text) ---
 bot.on("message:text", async (ctx) => {
     await connectDB();
     const text = ctx.message.text.trim();
-    if (text.startsWith("/")) return; // Command တွေကိုကျော်မယ်
 
-    // ၁။ MongoDB ထဲမှာ အရင်ရှာမယ် (Case-insensitive search)
+    // Command ဖြစ်နေရင် ဒီ logic ကို ကျော်သွားဖို့ (အပေါ်က command မှာ မမိခဲ့ရင်)
+    if (text.startsWith("/")) return;
+
+    // MongoDB ထဲမှာ အရင်ရှာမယ်
     let match = await Match.findOne({
         $or: [
             { home: { $regex: text, $options: "i" } },
@@ -19,10 +49,9 @@ bot.on("message:text", async (ctx) => {
     });
 
     const now = new Date();
-    // ၂။ DB မှာမရှိရင် သို့မဟုတ် ၁ မိနစ်ထက် ကြာနေရင် API ကနေအသစ်တောင်းမယ်
+    // DB မှာမရှိရင် သို့မဟုတ် ၁ မိနစ်ထက် ကြာနေရင် API ကနေအသစ်တောင်းမယ်
     if (!match || (now - new Date(match.lastUpdated)) > 60000) {
         try {
-            // Fotmob ကနေ ဒီနေ့ပွဲတွေအကုန်ဆွဲယူ (ရှာရလွယ်အောင်)
             const today = now.toLocaleDateString('en-CA').replace(/-/g, '');
             const data = await fotmob.getMatchesByDate(today);
             
@@ -41,7 +70,6 @@ bot.on("message:text", async (ctx) => {
             if (foundInApi) {
                 const { m, leagueName } = foundInApi;
                 const score = `${m.home.score}-${m.away.score}`;
-                // ၃။ API ကရတာကို DB မှာ Update/Insert လုပ်မယ် (On-demand Save)
                 match = await Match.findOneAndUpdate(
                     { fixtureId: m.id },
                     { 
@@ -53,7 +81,9 @@ bot.on("message:text", async (ctx) => {
                     { upsert: true, new: true }
                 );
             }
-        } catch (err) { console.error("API Search Error:", err); }
+        } catch (err) { 
+            console.error("API Search Error:", err); 
+        }
     }
 
     if (match) {
@@ -67,30 +97,7 @@ bot.on("message:text", async (ctx) => {
     }
 });
 
-bot.command("live", async (ctx) => {
-    try {
-        await connectDB();
-        const liveMatches = await Match.find({ status: "Live" });
-        
-        if (liveMatches.length === 0) {
-            return ctx.reply("🏟️ လောလောဆယ် Live ပွဲစဉ်မရှိသေးပါဘူးဗျ။ တခြားအသင်းနာမည်တွေ ရိုက်ရှာကြည့်ပါဦး။");
-        }
-        
-        let msg = "⚽ *LIVE SCORES*\n\n";
-        const keyboard = new InlineKeyboard();
-        liveMatches.slice(0, 8).forEach(m => {
-            msg += `• ${m.home} ${m.score} ${m.away}\n`;
-            keyboard.text(`🔔 ${m.home.substring(0,5)}`, `sub_${m.fixtureId}`).row();
-        });
-        
-        ctx.reply(msg, { parse_mode: "Markdown", reply_markup: keyboard });
-    } catch (err) {
-        console.error(err);
-        ctx.reply("❌ Error: DB ချိတ်ဆက်မှု အဆင်မပြေပါဘူး။");
-    }
-});
-
-// Noti Subscribe Logic
+// --- (၃) Callback Query Logic ---
 bot.on("callback_query:data", async (ctx) => {
     await connectDB();
     const data = ctx.callbackQuery.data;
@@ -105,8 +112,9 @@ bot.on("callback_query:data", async (ctx) => {
             { upsert: true }
         );
         await ctx.answerCallbackQuery("✅ Noti မှတ်သားပြီးပါပြီ။");
-        await ctx.reply(`🔔 သင်သည် ပွဲစဉ် (ID: ${fId}) အတွက် Noti ယူထားလိုက်ပါပြီ။`);
+        await ctx.reply(`🔔 သင်သည် ပွဲစဉ် (ID: ${fId}) အတွက် Noti ယူထားလိုက်ပါပြီ။ ဂိုးဝင်ရင် အသိပေးပါ့မယ်။`);
     }
 });
 
+// Vercel အတွက် export default လုပ်ပေးရပါမယ်
 export default webhookCallback(bot, "http");
