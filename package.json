@@ -6,13 +6,13 @@
   "scripts": {
     "start": "node api/index.js"
   },
-  "dependencies": {
+"dependencies": {
     "grammy": "^1.21.1",
     "mongoose": "^8.2.1",
-    "fotmob": "^1.7.0",
+    "fotmob": "latest",   // <--- ဒီနေရာကို "latest" လို့ ပြောင်းလိုက်ပါ
     "fuse.js": "^7.0.0",
     "axios": "^1.6.7"
-  },
+},
   "engines": {
     "node": "24.x" 
   }
