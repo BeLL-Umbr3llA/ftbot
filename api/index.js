@@ -5,11 +5,10 @@ const { connectDB, Match, User } = require("../db");
 
 const bot = new Bot(process.env.BOT_TOKEN);
 
-// --- (၁) Commands အပိုင်းကို အပေါ်ဆုံးမှာ ထားရပါမယ် ---
+// --- (၁) Commands: /live ---
 bot.command("live", async (ctx) => {
     try {
         await connectDB();
-        // DB ထဲမှာ Live ဖြစ်နေတာတွေကို အရင်ရှာမယ်
         const liveMatches = await Match.find({ status: "Live" });
         
         if (liveMatches.length === 0) {
@@ -30,14 +29,13 @@ bot.command("live", async (ctx) => {
     }
 });
 
-bot.command("start", (ctx) => ctx.reply("မင်္ဂလာပါ! အသင်းနာမည်ရိုက်ပြီး ပွဲစဉ်ရှာနိုင်သလို /live command နဲ့လည်း လက်ရှိပွဲတွေကို ကြည့်နိုင်ပါတယ်ဗျ။"));
+bot.command("start", (ctx) => ctx.reply("မင်္ဂလာပါ! အသင်းနာမည်ရိုက်ပြီး ဒီနေ့နဲ့ မနက်ဖြန် ပွဲစဉ်တွေကို ရှာနိုင်ပါတယ်ဗျ။"));
 
-// --- (၂) Search Logic (Message Text) ---
+// --- (၂) Search Logic (Today & Tomorrow) ---
 bot.on("message:text", async (ctx) => {
     await connectDB();
     const text = ctx.message.text.trim();
 
-    // Command ဖြစ်နေရင် ဒီ logic ကို ကျော်သွားဖို့ (အပေါ်က command မှာ မမိခဲ့ရင်)
     if (text.startsWith("/")) return;
 
     // MongoDB ထဲမှာ အရင်ရှာမယ်
@@ -52,11 +50,23 @@ bot.on("message:text", async (ctx) => {
     // DB မှာမရှိရင် သို့မဟုတ် ၁ မိနစ်ထက် ကြာနေရင် API ကနေအသစ်တောင်းမယ်
     if (!match || (now - new Date(match.lastUpdated)) > 60000) {
         try {
-            const today = now.toLocaleDateString('en-CA').replace(/-/g, '');
-            const data = await fotmob.getMatchesByDate(today);
+            // ရက်စွဲသတ်မှတ်ခြင်း (Today & Tomorrow)
+            const todayStr = now.toLocaleDateString('en-CA').replace(/-/g, '');
+            const tomorrow = new Date(now);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            const tomorrowStr = tomorrow.toLocaleDateString('en-CA').replace(/-/g, '');
+
+            // API နှစ်ခုကို ပြိုင်တူခေါ်မယ်
+            const [todayData, tomorrowData] = await Promise.all([
+                fotmob.getMatchesByDate(todayStr),
+                fotmob.getMatchesByDate(tomorrowStr)
+            ]);
+
+            // အချက်အလက်အားလုံးကို ပေါင်းလိုက်မယ်
+            const allLeagues = [...todayData.leagues, ...tomorrowData.leagues];
             
             let foundInApi = null;
-            for (const league of data.leagues) {
+            for (const league of allLeagues) {
                 const m = league.matches.find(x => 
                     x.home.name.toLowerCase().includes(text.toLowerCase()) || 
                     x.away.name.toLowerCase().includes(text.toLowerCase())
@@ -93,11 +103,11 @@ bot.on("message:text", async (ctx) => {
             { parse_mode: "Markdown", reply_markup: keyboard }
         );
     } else {
-        await ctx.reply("🔍 ပွဲစဉ်ရှာမတွေ့ပါ။ အသင်းနာမည်ကို အင်္ဂလိပ်လို (ဥပမာ- Chelsea) ဟု ရိုက်ပေးပါဗျ။");
+        await ctx.reply("🔍 ပွဲစဉ်ရှာမတွေ့ပါ။ အသင်းနာမည်ကို အင်္ဂလိပ်လို (ဥပမာ- Chelsea) ဟု ရိုက်ပေးပါဗျ။ (ဒီနေ့နဲ့ မနက်ဖြန် ပွဲစဉ်တွေကိုပဲ ရှာပေးနိုင်ပါတယ်)");
     }
 });
 
-// --- (၃) Callback Query Logic ---
+// --- (၃) Callback Query ---
 bot.on("callback_query:data", async (ctx) => {
     await connectDB();
     const data = ctx.callbackQuery.data;
@@ -116,5 +126,4 @@ bot.on("callback_query:data", async (ctx) => {
     }
 });
 
-// Vercel အတွက် export default လုပ်ပေးရပါမယ်
 export default webhookCallback(bot, "http");
