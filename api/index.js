@@ -5,15 +5,20 @@ const { connectDB, Match, User } = require("../db");
 
 const bot = new Bot(process.env.BOT_TOKEN);
 
-// --- (၁) Commands: /live ---
+// --- Helper Function: Date formatting (YYYYMMDD) ---
+const getFotmobDate = (date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}${m}${d}`;
+};
+
+// --- (၁) /live Command ---
 bot.command("live", async (ctx) => {
     try {
         await connectDB();
         const liveMatches = await Match.find({ status: "Live" });
-        
-        if (liveMatches.length === 0) {
-            return ctx.reply("🏟️ လောလောဆယ် Live ပွဲစဉ်မရှိသေးပါဘူးဗျ။ တခြားအသင်းနာမည်တွေ ရိုက်ရှာကြည့်ပါဦး။");
-        }
+        if (liveMatches.length === 0) return ctx.reply("🏟️ လောလောဆယ် Live ပွဲစဉ်မရှိသေးပါဘူး။");
         
         let msg = "⚽ *LIVE SCORES*\n\n";
         const keyboard = new InlineKeyboard();
@@ -21,55 +26,56 @@ bot.command("live", async (ctx) => {
             msg += `• ${m.home} ${m.score} ${m.away}\n`;
             keyboard.text(`🔔 ${m.home.substring(0,5)}`, `sub_${m.fixtureId}`).row();
         });
-        
         ctx.reply(msg, { parse_mode: "Markdown", reply_markup: keyboard });
-    } catch (err) {
-        console.error(err);
-        ctx.reply("❌ Error: Live ပွဲစဉ်တွေ ဆွဲယူရာမှာ အဆင်မပြေဖြစ်သွားပါတယ်။");
-    }
+    } catch (err) { ctx.reply("❌ DB Connection Error!"); }
 });
 
-bot.command("start", (ctx) => ctx.reply("မင်္ဂလာပါ! အသင်းနာမည်ရိုက်ပြီး ဒီနေ့နဲ့ မနက်ဖြန် ပွဲစဉ်တွေကို ရှာနိုင်ပါတယ်ဗျ။"));
-
-// --- (၂) Search Logic (Today & Tomorrow) ---
+// --- (၂) Search Logic ---
 bot.on("message:text", async (ctx) => {
     await connectDB();
-    const text = ctx.message.text.trim();
+    const query = ctx.message.text.trim();
+    if (query.startsWith("/")) return;
 
-    if (text.startsWith("/")) return;
-
-    // MongoDB ထဲမှာ အရင်ရှာမယ်
+    // ၁။ DB မှာ အရင်ရှာ
     let match = await Match.findOne({
         $or: [
-            { home: { $regex: text, $options: "i" } },
-            { away: { $regex: text, $options: "i" } }
+            { home: { $regex: query, $options: "i" } },
+            { away: { $regex: query, $options: "i" } }
         ]
     });
 
     const now = new Date();
-    // DB မှာမရှိရင် သို့မဟုတ် ၁ မိနစ်ထက် ကြာနေရင် API ကနေအသစ်တောင်းမယ်
+    // ၂။ DB မှာမရှိရင် သို့မဟုတ် ၁ မိနစ်ကျော်ရင် API ဆွဲမယ်
     if (!match || (now - new Date(match.lastUpdated)) > 60000) {
         try {
-            // ရက်စွဲသတ်မှတ်ခြင်း (Today & Tomorrow)
-            const todayStr = now.toLocaleDateString('en-CA').replace(/-/g, '');
+            const todayStr = getFotmobDate(now);
             const tomorrow = new Date(now);
             tomorrow.setDate(tomorrow.getDate() + 1);
-            const tomorrowStr = tomorrow.toLocaleDateString('en-CA').replace(/-/g, '');
+            const tomorrowStr = getFotmobDate(tomorrow);
 
-            // API နှစ်ခုကို ပြိုင်တူခေါ်မယ်
+            console.log(`Fetching Fotmob for: ${todayStr} & ${tomorrowStr}`);
+
             const [todayData, tomorrowData] = await Promise.all([
-                fotmob.getMatchesByDate(todayStr),
-                fotmob.getMatchesByDate(tomorrowStr)
+                fotmob.getMatchesByDate(todayStr).catch(() => null),
+                fotmob.getMatchesByDate(tomorrowStr).catch(() => null)
             ]);
 
-            // အချက်အလက်အားလုံးကို ပေါင်းလိုက်မယ်
-            const allLeagues = [...todayData.leagues, ...tomorrowData.leagues];
+            if (!todayData && !tomorrowData) {
+                console.error("Fotmob API is not returning data!");
+            }
+
+            const allLeagues = [
+                ...(todayData?.leagues || []),
+                ...(tomorrowData?.leagues || [])
+            ];
             
             let foundInApi = null;
+            const searchTxt = query.toLowerCase().replace(/\s+/g, '');
+
             for (const league of allLeagues) {
                 const m = league.matches.find(x => 
-                    x.home.name.toLowerCase().includes(text.toLowerCase()) || 
-                    x.away.name.toLowerCase().includes(text.toLowerCase())
+                    x.home.name.toLowerCase().replace(/\s+/g, '').includes(searchTxt) || 
+                    x.away.name.toLowerCase().replace(/\s+/g, '').includes(searchTxt)
                 );
                 if (m) {
                     foundInApi = { m, leagueName: league.name };
@@ -79,20 +85,21 @@ bot.on("message:text", async (ctx) => {
 
             if (foundInApi) {
                 const { m, leagueName } = foundInApi;
-                const score = `${m.home.score}-${m.away.score}`;
+                const scoreStr = (m.home.score !== undefined) ? `${m.home.score}-${m.away.score}` : "0-0";
+                
                 match = await Match.findOneAndUpdate(
                     { fixtureId: m.id },
                     { 
                         home: m.home.name, away: m.away.name,
-                        league: leagueName, score: score,
-                        status: m.status.live ? "Live" : m.status.reasonShort,
+                        league: leagueName, score: scoreStr,
+                        status: m.status.live ? "Live" : (m.status.reasonShort || "NS"),
                         lastUpdated: new Date()
                     },
                     { upsert: true, new: true }
                 );
             }
         } catch (err) { 
-            console.error("API Search Error:", err); 
+            console.error("Fotmob API Fetch Error:", err); 
         }
     }
 
@@ -103,11 +110,11 @@ bot.on("message:text", async (ctx) => {
             { parse_mode: "Markdown", reply_markup: keyboard }
         );
     } else {
-        await ctx.reply("🔍 ပွဲစဉ်ရှာမတွေ့ပါ။ အသင်းနာမည်ကို အင်္ဂလိပ်လို (ဥပမာ- Chelsea) ဟု ရိုက်ပေးပါဗျ။ (ဒီနေ့နဲ့ မနက်ဖြန် ပွဲစဉ်တွေကိုပဲ ရှာပေးနိုင်ပါတယ်)");
+        await ctx.reply(`🔍 "${query}" အတွက် ပွဲစဉ်ရှာမတွေ့ပါ။ \n(ဒီနေ့နဲ့ မနက်ဖြန် ပွဲစဉ်တွေကိုပဲ ရှာပေးနိုင်ပါတယ်ဗျ)`);
     }
 });
 
-// --- (၃) Callback Query ---
+// --- (၃) Noti Callback ---
 bot.on("callback_query:data", async (ctx) => {
     await connectDB();
     const data = ctx.callbackQuery.data;
@@ -115,14 +122,11 @@ bot.on("callback_query:data", async (ctx) => {
         const fId = parseInt(data.split("_")[1]);
         await User.findOneAndUpdate(
             { userId: ctx.from.id },
-            { 
-                name: ctx.from.first_name,
-                $addToSet: { subscriptions: fId } 
-            },
+            { name: ctx.from.first_name, $addToSet: { subscriptions: fId } },
             { upsert: true }
         );
         await ctx.answerCallbackQuery("✅ Noti မှတ်သားပြီးပါပြီ။");
-        await ctx.reply(`🔔 သင်သည် ပွဲစဉ် (ID: ${fId}) အတွက် Noti ယူထားလိုက်ပါပြီ။ ဂိုးဝင်ရင် အသိပေးပါ့မယ်။`);
+        await ctx.reply(`🔔 ပွဲစဉ် (ID: ${fId}) အတွက် Noti ဖွင့်လိုက်ပါပြီ။`);
     }
 });
 
