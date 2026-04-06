@@ -6,9 +6,10 @@ const { connectDB, Match, User } = require("../db");
 const bot = new Bot(process.env.BOT_TOKEN);
 
 export default async function handler(req, res) {
-    if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
-        return res.status(401).send("Unauthorized");
-    }
+   if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).send("Unauthorized");
+}
+
 
     await connectDB();
 
