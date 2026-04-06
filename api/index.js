@@ -5,11 +5,16 @@ const { connectDB, Match, User } = require("../db");
 
 const bot = new Bot(process.env.BOT_TOKEN);
 
-// --- Helper Function: Date formatting (YYYYMMDD) ---
-const getFotmobDate = (date) => {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
+// --- Helper: မြန်မာစံတော်ချိန်နဲ့ ညီတဲ့ YYYYMMDD ထုတ်ပေးရန် ---
+const getMMDate = (offsetDays = 0) => {
+    const now = new Date();
+    // UTC ကို မြန်မာစံတော်ချိန် (6.5 hours) ပေါင်းထည့်
+    const mmTime = new Date(now.getTime() + (6.5 * 60 * 60 * 1000)); 
+    mmTime.setDate(mmTime.getDate() + offsetDays);
+    
+    const y = mmTime.getFullYear();
+    const m = String(mmTime.getMonth() + 1).padStart(2, '0');
+    const d = String(mmTime.getDate()).padStart(2, '0');
     return `${y}${m}${d}`;
 };
 
@@ -36,7 +41,6 @@ bot.on("message:text", async (ctx) => {
     const query = ctx.message.text.trim();
     if (query.startsWith("/")) return;
 
-    // ၁။ DB မှာ အရင်ရှာ
     let match = await Match.findOne({
         $or: [
             { home: { $regex: query, $options: "i" } },
@@ -45,24 +49,23 @@ bot.on("message:text", async (ctx) => {
     });
 
     const now = new Date();
-    // ၂။ DB မှာမရှိရင် သို့မဟုတ် ၁ မိနစ်ကျော်ရင် API ဆွဲမယ်
     if (!match || (now - new Date(match.lastUpdated)) > 60000) {
         try {
-            const todayStr = getFotmobDate(now);
-            const tomorrow = new Date(now);
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            const tomorrowStr = getFotmobDate(tomorrow);
+            const todayStr = getMMDate(0);
+            const tomorrowStr = getMMDate(1);
 
-            console.log(`Fetching Fotmob for: ${todayStr} & ${tomorrowStr}`);
+            console.log(`🔍 Searching API for: ${todayStr} & ${tomorrowStr}`);
+
+            // API Error ကြောင့် Bot မရပ်သွားအောင် catch လုပ်ထားမယ်
+            const fetchSafe = async (date) => {
+                try { return await fotmob.getMatchesByDate(date); } 
+                catch (e) { console.error(`API 404 for ${date}`); return null; }
+            };
 
             const [todayData, tomorrowData] = await Promise.all([
-                fotmob.getMatchesByDate(todayStr).catch(() => null),
-                fotmob.getMatchesByDate(tomorrowStr).catch(() => null)
+                fetchSafe(todayStr),
+                fetchSafe(tomorrowStr)
             ]);
-
-            if (!todayData && !tomorrowData) {
-                console.error("Fotmob API is not returning data!");
-            }
 
             const allLeagues = [
                 ...(todayData?.leagues || []),
@@ -98,9 +101,7 @@ bot.on("message:text", async (ctx) => {
                     { upsert: true, new: true }
                 );
             }
-        } catch (err) { 
-            console.error("Fotmob API Fetch Error:", err); 
-        }
+        } catch (err) { console.error("General API Error:", err); }
     }
 
     if (match) {
