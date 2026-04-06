@@ -1,11 +1,10 @@
 {
   "name": "football-noti-bot",
   "version": "1.0.0",
-  "description": "Smart Football Goal Notification Bot for Mg Aung Ko Phyoe",
+  "description": "Smart Football Goal Notification Bot",
   "main": "api/index.js",
   "scripts": {
-    "start": "node api/index.js",
-    "dev": "vercel dev"
+    "start": "node api/index.js"
   },
   "dependencies": {
     "grammy": "^1.21.1",
@@ -15,16 +14,6 @@
     "axios": "^1.6.7"
   },
   "engines": {
-    "node": "18.x"
-  },
-  "keywords": [
-    "telegram",
-    "bot",
-    "football",
-    "fotmob",
-    "mongodb",
-    "vercel"
-  ],
-  "author": "Mg Aung Ko Phyoe",
-  "license": "MIT"
+    "node": "24.x" 
+  }
 }
