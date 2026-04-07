@@ -5,23 +5,28 @@ const { connectDB, Match, User } = require("../db");
 const bot = new Bot(process.env.BOT_TOKEN);
 const API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 
+// API Fetch Helper (Format မှန်အောင် ပြင်ထားသည်)
 async function fetchFD(endpoint) {
-    const res = await fetch(`https://api.football-data.org/v4/${endpoint}`, {
-        headers: { "X-Auth-Token": API_KEY }
-    });
-    if (!res.ok) return null;
-    return await res.json();
+    try {
+        const res = await fetch(`https://api.football-data.org/v4/${endpoint}`, {
+            headers: { "X-Auth-Token": API_KEY }
+        });
+        if (!res.ok) return null;
+        return await res.json();
+    } catch (err) {
+        return null;
+    }
 }
 
-bot.command("start", (ctx) => ctx.reply("⚽ Football Bot Ready!\n/live - Live ပွဲစဉ်များ\nအသင်းနာမည်ရိုက်ပြီး ရှာနိုင်ပါသည်။"));
+bot.command("start", (ctx) => ctx.reply("Football Bot Ready!\n/live - Check Live Matches\nType team name to search matches."));
 
-// --- Live Button နှိပ်ရင် ပြမည့်အပိုင်း ---
+// --- League Selection (Unicode Error ကင်းအောင် Emoji ဖယ်ထားသည်) ---
 bot.command("live", async (ctx) => {
     const kb = new InlineKeyboard()
-        .text("🏴󠁧󠁢󠁥󠁮󠁧󠁿 PL", "lv_PL").text("🇪🇸 La Liga", "lv_PD").row()
-        .text("🇮🇹 Serie A", "lv_SA").text("🇩🇪 Bundesliga", "lv_BL1").row()
-        .text("🇪🇺 UCL", "lv_CL").text("🇫🇷 Ligue 1", "lv_FL1");
-    await ctx.reply("🏆 League ရွေးပါ-", { reply_markup: kb });
+        .text("PL (England)", "lv_PL").text("La Liga (Spain)", "lv_PD").row()
+        .text("Serie A (Italy)", "lv_SA").text("Bundesliga (Germany)", "lv_BL1").row()
+        .text("UCL (Europe)", "lv_CL").text("Ligue 1 (France)", "lv_FL1");
+    await ctx.reply("Select League:", { reply_markup: kb });
 });
 
 bot.on("callback_query:data", async (ctx) => {
@@ -30,24 +35,25 @@ bot.on("callback_query:data", async (ctx) => {
 
     if (data.startsWith("lv_")) {
         const code = data.split("_")[1];
-        // API Tier အရ matches?status=LIVE က Error တက်တတ်လို့ အကုန်ဆွဲပြီး filter လုပ်မယ်
+        // 404 Error မတက်အောင် endpoint ကို ရှင်းရှင်းပဲ ခေါ်ထားသည်
         const res = await fetchFD(`competitions/${code}/matches`);
         
-        if (!res || !res.matches) return ctx.answerCallbackQuery("⚠️ API Error!");
+        if (!res || !res.matches) return ctx.answerCallbackQuery("API Error!");
 
-        const liveNow = res.matches.filter(m => m.status === "IN_PLAY" || m.status === "LIVE");
+        // Status စစ်ပြီး Live ဖြစ်နေတဲ့ ပွဲတွေကိုပဲ ယူသည်
+        const liveNow = res.matches.filter(m => m.status === "IN_PLAY" || m.status === "LIVE" || m.status === "PAUSED");
 
         if (liveNow.length === 0) {
-            return ctx.reply(`🏟️ ${code} မှာ လောလောဆယ် Live ပွဲမရှိပါ။`);
+            return ctx.reply(`No Live matches in ${code} at the moment.`);
         }
 
-        let msg = `⚽ *LIVE SCORES*\n\n`;
+        let msg = `LIVE SCORES (${code})\n\n`;
         const kb = new InlineKeyboard();
         liveNow.forEach(m => {
-            msg += `• ${m.homeTeam.shortName} ${m.score.fullTime.home}-${m.score.fullTime.away} ${m.awayTeam.shortName}\n`;
-            kb.text(`🔔 Noti: ${m.homeTeam.tla}`, `sub_${m.id}`).row();
+            msg += `- ${m.homeTeam.shortName} ${m.score.fullTime.home}-${m.score.fullTime.away} ${m.awayTeam.shortName}\n`;
+            kb.text(`Noti: ${m.homeTeam.tla}`, `sub_${m.id}`).row();
         });
-        await ctx.reply(msg, { parse_mode: "Markdown", reply_markup: kb });
+        await ctx.reply(msg, { reply_markup: kb });
     }
 
     if (data.startsWith("sub_")) {
@@ -57,17 +63,17 @@ bot.on("callback_query:data", async (ctx) => {
             { username: ctx.from.username, $addToSet: { subscriptions: fId } },
             { upsert: true }
         );
-        await ctx.answerCallbackQuery("✅ ဂိုးသွင်းရင် Noti ပို့ပေးပါမယ်။");
+        await ctx.answerCallbackQuery("Notification Set!");
     }
 });
 
-// --- အသင်းရှာဖွေခြင်း ---
+// --- Team Search Logic ---
 bot.on("message:text", async (ctx) => {
     await connectDB();
     const query = ctx.message.text.trim();
     if (query.startsWith("/")) return;
 
-    // ၁၅ မိနစ်အတွင်း data ကိုပဲယူမယ် (API Limit ကြောင့်)
+    // API Limit ကြောင့် DB ထဲက Data ကို အရင်စစ်သည်
     let matches = await Match.find({ lastUpdated: { $gte: new Date(Date.now() - 900000) } });
 
     if (matches.length === 0) {
@@ -93,10 +99,10 @@ bot.on("message:text", async (ctx) => {
 
     if (result.length > 0) {
         const m = result[0].item;
-        const kb = new InlineKeyboard().text("🔔 Noti ယူမည်", `sub_${m.fixtureId}`);
-        await ctx.reply(`🏟️ *Found Match*\n\n🆚 ${m.home} vs ${m.away}\n🔢 Score: ${m.score}\n🕒 Status: ${m.status}`, { reply_markup: kb });
+        const kb = new InlineKeyboard().text("Set Noti", `sub_${m.fixtureId}`);
+        await ctx.reply(`Match: ${m.home} vs ${m.away}\nScore: ${m.score}\nStatus: ${m.status}`, { reply_markup: kb });
     } else {
-        await ctx.reply("🔍 ရှာမတွေ့ပါ။ အင်္ဂလိပ်လို အသင်းနာမည် အပြည့်အစုံ ရိုက်ကြည့်ပါ။");
+        await ctx.reply("Match not found. Please try again.");
     }
 });
 
