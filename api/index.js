@@ -3,6 +3,19 @@ const { connectDB, Match, User } = require("../db");
 
 const bot = new Bot(process.env.BOT_TOKEN);
 const API_KEY = process.env.FOOTBALL_DATA_API_KEY;
+export default async function handler(req, res) {
+    console.log("--- New Request Received ---");
+    console.log("Method:", req.method);
+    console.log("Body:", JSON.stringify(req.body)); // ဒီစာကြောင်းက Log မှာ အချက်အလက်ပြပါလိမ့်မယ်
+
+    try {
+        await webhookCallback(bot, "http")(req, res);
+    } catch (err) {
+        console.error("Webhook Error:", err.message);
+        res.status(500).send(err.message);
+    }
+}
+
 async function fetchFD(endpoint) {
     console.log("Using API Key:", API_KEY ? "Key Found" : "Key Missing"); // ဒါလေး ထည့်စစ်ပါ
     try {
