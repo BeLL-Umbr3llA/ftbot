@@ -1,60 +1,34 @@
-const Fotmob = require("fotmob").default;
-const fotmob = new Fotmob();
-const { Bot } = require("grammy");
+import { Bot } from "grammy";
 const { connectDB, Match, User } = require("../db");
-
 const bot = new Bot(process.env.BOT_TOKEN);
 
 export default async function handler(req, res) {
-    if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
-        return res.status(401).send("Unauthorized");
-    }
-
     await connectDB();
+    const subsCount = await User.countDocuments({ subscriptions: { $exists: true, $not: { $size: 0 } } });
+    if (subsCount === 0) return res.send("No subscribers.");
 
-    // ၁။ Noti ယူထားတဲ့ User ရှိမရှိ အရင်စစ် (မရှိရင် ဘာမှမလုပ်ဘူး)
-    const usersWithSubs = await User.find({ "subscriptions.0": { $exists: true } });
-    if (usersWithSubs.length === 0) return res.status(200).send("No active subscribers. Skipping...");
+    try {
+        const apiData = await fetch("https://api.football-data.org/v4/matches?status=LIVE", {
+            headers: { "X-Auth-Token": process.env.FOOTBALL_DATA_API_KEY }
+        }).then(r => r.json());
 
-    const today = new Date().toLocaleDateString('en-CA').replace(/-/g, '');
-    const data = await fotmob.getMatchesByDate(today);
+        if (!apiData.matches) return res.send("No live matches.");
 
-    for (const league of data.leagues) {
-        for (const m of league.matches) {
-            const currentScore = `${m.home.score}-${m.away.score}`;
+        for (const m of apiData.matches) {
+            const currentScore = `${m.score.fullTime.home}-${m.score.fullTime.away}`;
             const oldMatch = await Match.findOne({ fixtureId: m.id });
 
-            // ၂။ Goal Notification (DB ထဲကရမှတ်နဲ့ API ကရမှတ် မတူရင် ဂိုးဝင်တာ)
-            if (oldMatch && oldMatch.score !== currentScore && m.status.live) {
-                const subs = await User.find({ subscriptions: m.id });
-                for (const u of subs) {
-                    await bot.api.sendMessage(u.userId, 
-                        `⚽ *GOAL ALERT!*\n\nဟိုင်း ${u.name} ရေ...\n${m.home.name} ${currentScore} ${m.away.name}\n🕒 ပွဲကစားချိန်: ${m.status.liveTime}`,
+            if (oldMatch && oldMatch.score !== currentScore) {
+                const targetUsers = await User.find({ subscriptions: m.id });
+                for (const user of targetUsers) {
+                    await bot.api.sendMessage(user.userId, 
+                        `⚽ *GOAL ALERT!* ⚽\n\n${m.homeTeam.name} ${currentScore} ${m.awayTeam.name}\n🏆 ${m.competition.name}`,
                         { parse_mode: "Markdown" }
                     );
                 }
             }
-
-            // ၃။ ပွဲပြီးရင် Noti ပိတ်ပြီး User List ထဲက ပွဲ ID ကို ဖြုတ်ခြင်း
-            if (m.status.reasonShort === "FT") {
-                const subs = await User.find({ subscriptions: m.id });
-                for (const u of subs) {
-                    await bot.api.sendMessage(u.userId, `🏁 *MATCH FINISHED*\n${m.home.name} ${currentScore} ${m.away.name}\n\nဒီပွဲပြီးသွားလို့ Noti ပိတ်လိုက်ပါပြီဗျ။`);
-                    await User.updateOne({ userId: u.userId }, { $pull: { subscriptions: m.id } });
-                }
-            }
-
-            // ၄။ နောက်ဆုံးအခြေအနေကို DB မှာ Update လုပ်ထားမယ်
-            await Match.findOneAndUpdate(
-                { fixtureId: m.id },
-                { 
-                    score: currentScore, 
-                    status: m.status.live ? "Live" : m.status.reasonShort,
-                    lastUpdated: new Date()
-                },
-                { upsert: true }
-            );
+            await Match.findOneAndUpdate({ fixtureId: m.id }, { score: currentScore, lastUpdated: new Date() }, { upsert: true });
         }
-    }
-    res.status(200).send("Notifications Processed & Sync Done");
+        res.send("Success");
+    } catch (e) { res.status(500).send(e.message); }
 }
