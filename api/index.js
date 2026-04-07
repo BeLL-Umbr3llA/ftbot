@@ -12,133 +12,143 @@ async function fetchFD(endpoint) {
             headers: { "X-Auth-Token": API_KEY }
         });
         const data = await res.json();
-        if (!res.ok) return { error: data.message || "Unknown API Error" };
-        return data;
-    } catch (err) {
-        return { error: "Network/Server Error" };
-    }
+        return res.ok ? data : { error: data.message };
+    } catch (err) { return { error: "Network Error" }; }
 }
 
-// မြန်မာစံတော်ချိန် ပြောင်းလဲခြင်းနှင့် နေ့စွဲစစ်ဆေးခြင်း
 function formatMMT(utcString) {
     const date = new Date(utcString);
-    date.setMinutes(date.getMinutes() + 390); // UTC to MMT
+    date.setMinutes(date.getMinutes() + 390);
     const day = date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
     const time = date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true });
-    return { full: `${day} | ${time}`, time };
+    return { full: `${day} | ${time}`, dateOnly: day };
 }
 
-// Search အတွက် Random စာသားများ
-const getRandomWaitText = () => {
-    const texts = ["ရင်ခုန်နေပြီလား? 💓", "ပွဲစဖို့ စောင့်နေပါတယ်... ⏳", "အကြိတ်အနယ် ရှိမှာနော်... 🔥", "ဘယ်သူနိုင်မလဲ ခန့်မှန်းကြည့်ပါဦး... 🤔"];
-    return texts[Math.floor(Math.random() * texts.length)];
-};
+bot.command("start", (ctx) => ctx.reply("⚽ *B2 Football Noti Bot*\n\n/live - ပွဲစဉ်များကြည့်ရန်\nအသင်းနာမည်ရိုက်ပြီး ပွဲရှာနိုင်ပါသည်။", { parse_mode: "Markdown" }));
 
-bot.command("start", (ctx) => ctx.reply("⚽ *B2 Football Noti Bot*\n\n/live - ဒီနေ့နဲ့မနက်ဖြန် ပွဲစဉ်များ\nအသင်းနာမည်ရိုက်ပြီး ရှာဖွေနိုင်ပါသည်။", { parse_mode: "Markdown" }));
-
-// --- Live/Upcoming Matches (Today & Tomorrow) ---
+// --- League ခလုတ်များ (ပွဲအရေအတွက် ကြိုပြမည့် Logic) ---
 bot.command("live", async (ctx) => {
-    const kb = new InlineKeyboard()
-        .text("PL", "lv_PL").text("PD", "lv_PD").text("SA", "lv_SA").text("BL1", "lv_BL1").row()
-        .text("FL1", "lv_FL1").text("CL", "lv_CL").text("PPL", "lv_PPL").text("DED", "lv_DED").row()
-        .text("BSA", "lv_BSA").text("ELC", "lv_ELC").text("WC", "lv_WC").text("EC", "lv_EC");
-    await ctx.reply("🏆 ကြည့်လိုသော လိဂ်ကို ရွေးချယ်ပါ:", { reply_markup: kb });
+    await ctx.reply("⏳ League အချက်အလက်များ စစ်ဆေးနေသည်...");
+    
+    // API ကနေ ဒီနေ့နဲ့ မနက်ဖြန် ပွဲစဉ်အားလုံးကို တစ်ခါတည်းယူလိုက်မယ်
+    const res = await fetchFD("matches");
+    if (res.error) return ctx.reply("❌ API အလုပ်မလုပ်ပါ။ ခဏနေမှ ပြန်ကြိုးစားပါ။");
+
+    const now = new Date();
+    const tomorrowEnd = new Date();
+    tomorrowEnd.setDate(now.getDate() + 1);
+    tomorrowEnd.setHours(23, 59, 59);
+
+    const counts = {};
+    const leagues = [
+        { n: "PL", c: "PL" }, { n: "PD", c: "PD" }, { n: "SA", c: "SA" }, { n: "BL1", c: "BL1" },
+        { n: "FL1", c: "FL1" }, { n: "CL", c: "CL" }, { n: "PPL", c: "PPL" }, { n: "DED", c: "DED" }
+    ];
+
+    // ပွဲအရေအတွက် တွက်ချက်ခြင်း
+    res.matches.forEach(m => {
+        const mDate = new Date(m.utcDate);
+        if (mDate >= now && mDate <= tomorrowEnd) {
+            counts[m.competition.code] = (counts[m.competition.code] || 0) + 1;
+        }
+    });
+
+    const kb = new InlineKeyboard();
+    leagues.forEach((l, i) => {
+        const count = counts[l.c] || 0;
+        kb.text(`${l.n} (${count})`, `lv_${l.c}`);
+        if (i % 2 !== 0) kb.row();
+    });
+    kb.row().text("📅 အားလုံးကြည့်မည် (Upcoming 5 Days)", "upcoming_5");
+
+    await ctx.reply("🏆 *ကြည့်လိုသော လိဂ်ကို ရွေးချယ်ပါ*\n(ကွင်းစပ်ထဲက နံပါတ်မှာ ယနေ့နှင့်မနက်ဖြန်ရှိမည့် ပွဲအရေအတွက်ဖြစ်သည်)", { 
+        parse_mode: "Markdown", 
+        reply_markup: kb 
+    });
 });
 
 bot.on("callback_query:data", async (ctx) => {
     await connectDB();
     const data = ctx.callbackQuery.data;
 
+    // --- League အလိုက် ပွဲစဉ်ပြခြင်း ---
     if (data.startsWith("lv_")) {
         const code = data.split("_")[1];
-        await ctx.answerCallbackQuery("ပွဲစဉ်များ ရှာဖွေနေသည်...");
-        
+        await ctx.answerCallbackQuery("ရှာဖွေနေသည်...");
         const res = await fetchFD(`competitions/${code}/matches`);
-        if (res.error) return ctx.reply(`⚠️ Error: ${res.error}`);
 
         const now = new Date();
         const tomorrowEnd = new Date();
         tomorrowEnd.setDate(now.getDate() + 1);
-        tomorrowEnd.setHours(23, 59, 59, 999);
+        tomorrowEnd.setHours(23, 59, 59);
 
-        // ဒီနေ့နဲ့ မနက်ဖြန် ပွဲစဉ်များသာ Filter လုပ်ခြင်း
         const filtered = res.matches.filter(m => {
-            const mDate = new Date(m.utcDate);
-            return mDate >= now && mDate <= tomorrowEnd;
+            const d = new Date(m.utcDate);
+            return d >= now && d <= tomorrowEnd;
         });
 
-        if (filtered.length === 0) return ctx.reply(`🏟️ လောလောဆယ် ${code} မှာ ဒီနေ့/မနက်ဖြန် ပွဲစဉ်မရှိပါ။`);
+        if (filtered.length === 0) return ctx.reply(`🏟️ ${code} တွင် ယနေ့/မနက်ဖြန် ပွဲစဉ်မရှိပါ။`);
 
         let msg = `📅 *${code} ပွဲစဉ်များ (Today/Tomorrow)*\n\n`;
         filtered.forEach(m => {
             const { full } = formatMMT(m.utcDate);
             if (m.status === "TIMED") {
-                msg += `⏰ ${full}\n🤝 ${m.homeTeam.shortName} vs ${m.awayTeam.shortName}\n\n`;
+                msg += `⏰ ${full}\n🤝 *${m.homeTeam.shortName}* vs *${m.awayTeam.shortName}*\n\n`;
             } else {
-                msg += `🔴 LIVE | ${m.homeTeam.shortName} ${m.score.fullTime.home}-${m.score.fullTime.away} ${m.awayTeam.shortName}\n\n`;
+                msg += `🔴 *LIVE* | ${m.homeTeam.shortName} ${m.score.fullTime.home}-${m.score.fullTime.away} ${m.awayTeam.shortName}\n\n`;
             }
         });
         await ctx.reply(msg, { parse_mode: "Markdown" });
     }
 
-    if (data.startsWith("sub_")) {
-        const fixtureId = data.split("_")[1];
-        await User.findOneAndUpdate(
-            { userId: ctx.from.id },
-            { $addToSet: { subscriptions: fixtureId } },
-            { upsert: true }
-        );
-        await ctx.editMessageText(ctx.callbackQuery.message.text + "\n\n✅ *ဒီပွဲစဉ်အတွက် Noti ယူပြီးပါပြီ။ ပွဲစရင် လှမ်းအကြောင်းကြားပေးပါ့မယ်။*", { parse_mode: "Markdown" });
-        await ctx.answerCallbackQuery("Notification Set!");
+    // --- Upcoming 5 Days ---
+    if (data === "upcoming_5") {
+        await ctx.answerCallbackQuery("၅ ရက်စာ ပွဲစဉ်များ ယူနေသည်...");
+        const res = await fetchFD("matches");
+        
+        const now = new Date();
+        const fiveDaysLater = new Date();
+        fiveDaysLater.setDate(now.getDate() + 5);
+
+        const filtered = res.matches.filter(m => {
+            const d = new Date(m.utcDate);
+            return d >= now && d <= fiveDaysLater;
+        }).slice(0, 15); // စာသားမရှည်အောင် ၁၅ ပွဲပဲ ပြမယ်
+
+        let msg = `🗓️ *နောင် ၅ ရက်အတွင်း အရေးကြီးပွဲစဉ်များ*\n\n`;
+        filtered.forEach(m => {
+            const { full } = formatMMT(m.utcDate);
+            msg += `▫️ ${full}\n⚽ ${m.homeTeam.shortName} vs ${m.awayTeam.shortName}\n\n`;
+        });
+        await ctx.reply(msg, { parse_mode: "Markdown" });
     }
 });
 
-// --- Search Logic (with Random Texts & Date/Time) ---
+// --- Search Logic (with Random Texts) ---
 bot.on("message:text", async (ctx) => {
     await connectDB();
     const query = ctx.message.text.trim();
     if (query.startsWith("/")) return;
 
     let matches = await Match.find({ lastUpdated: { $gte: new Date(Date.now() - 3600000) } });
-
-    if (matches.length === 0) {
-        const res = await fetchFD("matches");
-        if (res && res.matches) {
-            for (const m of res.matches) {
-                await Match.findOneAndUpdate(
-                    { fixtureId: m.id },
-                    {
-                        home: m.homeTeam.name, away: m.awayTeam.name,
-                        league: m.competition.name, status: m.status,
-                        score: `${m.score.fullTime.home ?? 0}-${m.score.fullTime.away ?? 0}`,
-                        utcDate: m.utcDate, lastUpdated: new Date()
-                    }, { upsert: true, new: true }
-                );
-            }
-            matches = await Match.find();
-        }
-    }
-
     const fuse = new Fuse(matches, { keys: ["home", "away"], threshold: 0.3 });
     const result = fuse.search(query);
 
     if (result.length > 0) {
         const m = result[0].item;
         const { full } = formatMMT(m.utcDate);
-        const scoreDisplay = m.status === "TIMED" ? getRandomWaitText() : `ရလဒ်: ${m.score}`;
-        
         const kb = new InlineKeyboard().text("🔔 Noti ရယူမည်", `sub_${m.fixtureId}`);
         await ctx.reply(
-            `🏟️ *ပွဲစဉ်အသေးစိတ်*\n\n` +
+            `🏟️ *ပွဲစဉ်ရှာတွေ့သည်*\n\n` +
             `🏆 ${m.league}\n` +
             `🆚 ${m.home} vs ${m.away}\n` +
             `📅 ${full}\n` +
-            `🔢 ${scoreDisplay}\n` +
-            `🕒 အခြေအနေ: ${m.status === 'TIMED' ? 'ပွဲမစသေးပါ' : 'ကစားနေသည်'}`, 
+            `🔢 ${m.status === 'TIMED' ? getRandomWaitText() : m.score}\n` +
+            `🕒 အခြေအနေ: ${m.status === 'TIMED' ? 'ပွဲမစသေးပါ' : 'ကစားနေသည်'}`,
             { parse_mode: "Markdown", reply_markup: kb }
         );
     } else {
-        await ctx.reply("🔍 ပွဲစဉ်ရှာမတွေ့ပါ။ အသင်းနာမည်ကို အင်္ဂလိပ်လို ရိုက်ကြည့်ပါ (ဥပမာ- Arsenal)။");
+        await ctx.reply("🔍 ပွဲစဉ်ရှာမတွေ့ပါ။ (ဥပမာ- Arsenal)");
     }
 });
 
