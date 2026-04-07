@@ -1,22 +1,29 @@
 const mongoose = require("mongoose");
 
-// ၁။ MongoDB Atlas Connection String
-// Vercel Environment Variables ထဲမှာ MONGO_URI ဆိုတဲ့ နာမည်နဲ့ ထည့်ထားပေးပါ
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://theonephk_db_user:<db_password>@cluster0.r0yiorp.mongodb.net/football_bot?retryWrites=true&w=majority";
+// ၁။ Connection String (Vercel Environment Variables ထဲမှာ MONGO_URI ဆိုတဲ့နာမည်နဲ့ ထည့်ရမှာပါ)
+// Atlas ထဲကရတဲ့ "mongodb+srv://..." link ကို သုံးရပါမယ်
+const MONGO_URI = process.env.MONGO_URI;
 
 const connectDB = async () => {
+    // Vercel serverless ဖြစ်လို့ connection ရှိပြီးသားဆိုရင် ထပ်မချိတ်အောင် စစ်တာပါ
     if (mongoose.connection.readyState >= 1) return;
+
     try {
-        await mongoose.connect(MONGO_URI);
-        console.log("✅ MongoDB Connected!");
+        await mongoose.connect(MONGO_URI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+        });
+        console.log("✅ MongoDB Atlas Connected!");
     } catch (err) {
-        console.error("❌ MongoDB Connection Error:", err);
+        console.error("❌ MongoDB Connection Error:", err.message);
+        // Connection မရရင် process ကို သတ်လိုက်မယ်
+        process.exit(1);
     }
 };
 
-// ၂။ Match Schema (ပွဲစဉ်များ သိမ်းရန်)
+// ၂။ Match Schema (ဘောလုံးပွဲစဉ်များ သိမ်းရန်)
 const matchSchema = new mongoose.Schema({
-    fixtureId: { type: Number, unique: true },
+    fixtureId: { type: Number, unique: true, required: true },
     home: String,
     away: String,
     league: String,
@@ -27,12 +34,12 @@ const matchSchema = new mongoose.Schema({
 
 // ၃။ User Schema (Noti ယူထားသူများ သိမ်းရန်)
 const userSchema = new mongoose.Schema({
-    userId: Number,
+    userId: { type: Number, unique: true, required: true },
     username: String,
-    subscriptions: [Number] // fixtureIds list
+    subscriptions: [Number] // Fixture IDs List
 });
 
-// Model များ ထုတ်ပေးခြင်း
+// Model များ Export လုပ်ခြင်း
 const Match = mongoose.models.Match || mongoose.model("Match", matchSchema);
 const User = mongoose.models.User || mongoose.model("User", userSchema);
 
