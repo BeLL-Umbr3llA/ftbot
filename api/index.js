@@ -1,32 +1,32 @@
 const { Bot, webhookCallback, InlineKeyboard } = require("grammy");
-const Fuse = require("fuse.js");
 const { connectDB, Match, User } = require("../db");
 
 const bot = new Bot(process.env.BOT_TOKEN);
 const API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 
-// API Fetch Helper (Format မှန်အောင် ပြင်ထားသည်)
 async function fetchFD(endpoint) {
     try {
         const res = await fetch(`https://api.football-data.org/v4/${endpoint}`, {
             headers: { "X-Auth-Token": API_KEY }
         });
-        if (!res.ok) return null;
-        return await res.json();
+        
+        const data = await res.json();
+        
+        if (!res.ok) {
+            return { error: data.message || "Unknown API Error" };
+        }
+        return data;
     } catch (err) {
-        return null;
+        return { error: "Network/Server Error" };
     }
 }
 
-bot.command("start", (ctx) => ctx.reply("Football Bot Ready!\n/live - Check Live Matches\nType team name to search matches."));
-
-// --- League Selection (Unicode Error ကင်းအောင် Emoji ဖယ်ထားသည်) ---
 bot.command("live", async (ctx) => {
     const kb = new InlineKeyboard()
-        .text("PL (England)", "lv_PL").text("La Liga (Spain)", "lv_PD").row()
-        .text("Serie A (Italy)", "lv_SA").text("Bundesliga (Germany)", "lv_BL1").row()
-        .text("UCL (Europe)", "lv_CL").text("Ligue 1 (France)", "lv_FL1");
-    await ctx.reply("Select League:", { reply_markup: kb });
+        .text("PL (England)", "lv_PL").text("PD (Spain)", "lv_PD").row()
+        .text("SA (Italy)", "lv_SA").text("BL1 (Germany)", "lv_BL1").row()
+        .text("FL1 (France)", "lv_FL1").text("PPL (Portugal)", "lv_PPL");
+    await ctx.reply("Select League (Free Tier Only):", { reply_markup: kb });
 });
 
 bot.on("callback_query:data", async (ctx) => {
@@ -35,75 +35,82 @@ bot.on("callback_query:data", async (ctx) => {
 
     if (data.startsWith("lv_")) {
         const code = data.split("_")[1];
-        // 404 Error မတက်အောင် endpoint ကို ရှင်းရှင်းပဲ ခေါ်ထားသည်
-        const res = await fetchFD(`competitions/${code}/matches`);
+        await ctx.answerCallbackQuery("Fetching data...");
         
-        if (!res || !res.matches) return ctx.answerCallbackQuery("API Error!");
-
-        // Status စစ်ပြီး Live ဖြစ်နေတဲ့ ပွဲတွေကိုပဲ ယူသည်
-        const liveNow = res.matches.filter(m => m.status === "IN_PLAY" || m.status === "LIVE" || m.status === "PAUSED");
-
-        if (liveNow.length === 0) {
-            return ctx.reply(`No Live matches in ${code} at the moment.`);
+        // ဒီနေရာမှာ status=LIVE ကို တိုက်ရိုက်ထည့်ပြီး ခေါ်လိုက်ပါပြီ
+        const res = await fetchFD(`competitions/${code}/matches?status=LIVE`);
+        
+        if (res.error) {
+            return ctx.reply(`⚠️ API Error: ${res.error}`);
         }
 
-        let msg = `LIVE SCORES (${code})\n\n`;
-        const kb = new InlineKeyboard();
-        liveNow.forEach(m => {
-            msg += `- ${m.homeTeam.shortName} ${m.score.fullTime.home}-${m.score.fullTime.away} ${m.awayTeam.shortName}\n`;
-            kb.text(`Noti: ${m.homeTeam.tla}`, `sub_${m.id}`).row();
-        });
-        await ctx.reply(msg, { reply_markup: kb });
-    }
+        // res.matches က အလွတ်ပြန်လာရင် ပွဲမရှိဘူးလို့ ပြောမယ်
+        if (!res.matches || res.matches.length === 0) {
+            return ctx.reply(`🏟️ No live matches in ${code} right now.`);
+        }
 
-    if (data.startsWith("sub_")) {
-        const fId = parseInt(data.split("_")[1]);
-        await User.findOneAndUpdate(
-            { userId: ctx.from.id },
-            { username: ctx.from.username, $addToSet: { subscriptions: fId } },
-            { upsert: true }
-        );
-        await ctx.answerCallbackQuery("Notification Set!");
+        let msg = `⚽ LIVE SCORES (${code})\n\n`;
+        res.matches.forEach(m => {
+            msg += `- ${m.homeTeam.shortName} ${m.score.fullTime.home}-${m.score.fullTime.away} ${m.awayTeam.shortName}\n`;
+        });
+        await ctx.reply(msg);
     }
 });
-
-// --- Team Search Logic ---
+// --- အသင်းရှာဖွေခြင်း (Improved Search) ---
 bot.on("message:text", async (ctx) => {
     await connectDB();
     const query = ctx.message.text.trim();
     if (query.startsWith("/")) return;
 
-    // API Limit ကြောင့် DB ထဲက Data ကို အရင်စစ်သည်
-    let matches = await Match.find({ lastUpdated: { $gte: new Date(Date.now() - 900000) } });
+    // ၁။ DB ထဲမှာ အရင်ရှာကြည့်မယ် (Data လတ်ဆတ်အောင် ၁ နာရီအတွင်းဟာကိုပဲ ယူမယ်)
+    let matches = await Match.find({ 
+        lastUpdated: { $gte: new Date(Date.now() - 3600000) } 
+    });
 
+    // ၂။ DB ထဲမှာ data မရှိရင် (သို့မဟုတ်) ဟောင်းနေရင် API ကနေ အကုန်ဆွဲယူမယ်
     if (matches.length === 0) {
-        const res = await fetchFD("matches");
+        const res = await fetchFD("matches"); 
         if (res && res.matches) {
             for (const m of res.matches) {
                 await Match.findOneAndUpdate(
                     { fixtureId: m.id },
                     {
-                        home: m.homeTeam.name, away: m.awayTeam.name,
-                        league: m.competition.name, status: m.status,
+                        home: m.homeTeam.name, 
+                        away: m.awayTeam.name,
+                        league: m.competition.name, 
+                        status: m.status,
                         score: `${m.score.fullTime.home ?? 0}-${m.score.fullTime.away ?? 0}`,
                         lastUpdated: new Date()
-                    }, { upsert: true }
+                    }, 
+                    { upsert: true, new: true }
                 );
             }
+            // Update ပြီးမှ DB ကနေ ပြန်ဆွဲမယ်
             matches = await Match.find();
         }
     }
 
-    const fuse = new Fuse(matches, { keys: ["home", "away"], threshold: 0.4 });
+    // ၃။ Fuse.js နဲ့ ရှာမယ် (စာလုံးပေါင်း အနည်းငယ်လွဲရင်တောင် ရှာတွေ့အောင် threshold ထည့်ထားသည်)
+    const fuse = new Fuse(matches, { 
+        keys: ["home", "away"], 
+        threshold: 0.3 
+    });
     const result = fuse.search(query);
 
     if (result.length > 0) {
         const m = result[0].item;
-        const kb = new InlineKeyboard().text("Set Noti", `sub_${m.fixtureId}`);
-        await ctx.reply(`Match: ${m.home} vs ${m.away}\nScore: ${m.score}\nStatus: ${m.status}`, { reply_markup: kb });
+        const kb = new InlineKeyboard().text("🔔 Get Noti", `sub_${m.fixtureId}`);
+        
+        await ctx.reply(
+            `🏟️ *MATCH FOUND*\n\n` +
+            `🏆 ${m.league}\n` +
+            `🆚 ${m.home} vs ${m.away}\n` +
+            `🔢 Score: ${m.score}\n` +
+            `🕒 Status: ${m.status}`, 
+            { parse_mode: "Markdown", reply_markup: kb }
+        );
     } else {
-        await ctx.reply("Match not found. Please try again.");
+        await ctx.reply("🔍 ပွဲစဉ်ရှာမတွေ့ပါ။ အသင်းနာမည်ကို အင်္ဂလိပ်လို အပြည့်အစုံ ရိုက်ကြည့်ပေးပါ (ဥပမာ- Arsenal, Real Madrid)။");
     }
 });
-
 export default webhookCallback(bot, "http");
