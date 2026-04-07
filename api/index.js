@@ -1,93 +1,94 @@
 const { Bot, webhookCallback, InlineKeyboard } = require("grammy");
+const Fuse = require("fuse.js");
 const { connectDB, Match, User } = require("../db");
 
 const bot = new Bot(process.env.BOT_TOKEN);
+const API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 
-const getMMDate = (offsetDays = 0) => {
-    const now = new Date();
-    const mmTime = new Date(now.getTime() + (6.5 * 60 * 60 * 1000)); 
-    mmTime.setDate(mmTime.getDate() + offsetDays);
-    const y = mmTime.getFullYear();
-    const m = String(mmTime.getMonth() + 1).padStart(2, '0');
-    const d = String(mmTime.getDate()).padStart(2, '0');
-    return `${y}${m}${d}`;
-};
+// API Fetch Helper
+async function fetchFD(endpoint) {
+    const res = await fetch(`https://api.football-data.org/v4/${endpoint}`, {
+        headers: { "X-Auth-Token": API_KEY }
+    });
+    return await res.json();
+}
 
+bot.command("start", (ctx) => ctx.reply("⚽ Football Bot မှ ကြိုဆိုပါတယ်!\n\n- /live : League အလိုက်ကြည့်ရန်\n- အသင်းနာမည်ရိုက်ပြီး ပွဲစဉ်ရှာရန်"));
+
+// --- League ရွေးရန် ---
+bot.command("live", async (ctx) => {
+    const kb = new InlineKeyboard()
+        .text("🏴󠁧󠁢󠁥󠁮󠁧󠁿 PL", "lv_PL").text("🇪🇸 La Liga", "lv_PD").row()
+        .text("🇮🇹 Serie A", "lv_SA").text("🇩🇪 Bundesliga", "lv_BL1").row()
+        .text("🇪🇺 UCL", "lv_CL").text("🇫🇷 Ligue 1", "lv_FL1");
+    await ctx.reply("🏆 League တစ်ခု ရွေးပေးပါ-", { reply_markup: kb });
+});
+
+// --- Callback Logic (Live & Noti) ---
+bot.on("callback_query:data", async (ctx) => {
+    await connectDB();
+    const data = ctx.callbackQuery.data;
+
+    if (data.startsWith("lv_")) {
+        const code = data.split("_")[1];
+        const res = await fetchFD(`competitions/${code}/matches?status=LIVE`);
+        if (!res.matches?.length) return ctx.answerCallbackQuery("🏟️ Live ပွဲမရှိပါ။", { show_alert: true });
+
+        let msg = `⚽ *LIVE SCORES (${code})*\n\n`;
+        const kb = new InlineKeyboard();
+        res.matches.forEach(m => {
+            msg += `• ${m.homeTeam.shortName} ${m.score.fullTime.home}-${m.score.fullTime.away} ${m.awayTeam.shortName}\n`;
+            kb.text(`🔔 Noti: ${m.homeTeam.tla}`, `sub_${m.id}`).row();
+        });
+        await ctx.reply(msg, { parse_mode: "Markdown", reply_markup: kb });
+    }
+
+    if (data.startsWith("sub_")) {
+        const fId = parseInt(data.split("_")[1]);
+        await User.findOneAndUpdate(
+            { userId: ctx.from.id },
+            { username: ctx.from.username, $addToSet: { subscriptions: fId } },
+            { upsert: true }
+        );
+        await ctx.answerCallbackQuery("✅ ဂိုးသွင်းရင် Noti ပို့ပေးပါမယ်။");
+    }
+});
+
+// --- အသင်းရှာဖွေခြင်း (Fuse.js) ---
 bot.on("message:text", async (ctx) => {
     await connectDB();
-    const query = ctx.message.text.trim().toLowerCase();
+    const query = ctx.message.text.trim();
     if (query.startsWith("/")) return;
 
-    let match = await Match.findOne({
-        $or: [
-            { home: { $regex: query, $options: "i" } },
-            { away: { $regex: query, $options: "i" } }
-        ]
-    });
+    let matches = await Match.find({ lastUpdated: { $gte: new Date(Date.now() - 60000) } });
 
-    const now = new Date();
-    if (!match || (now - new Date(match.lastUpdated)) > 60000) {
-        try {
-            const todayStr = getMMDate(0);
-            const tomorrowStr = getMMDate(1);
-            
-            // Header တွေထည့်ပြီး Browser အတုလုပ်ခေါ်မယ်
-            const headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            };
-
-            const [resToday, resTomorrow] = await Promise.all([
-                fetch(`https://www.fotmob.com/api/matches?date=${todayStr}`, { headers }),
-                fetch(`https://www.fotmob.com/api/matches?date=${tomorrowStr}`, { headers })
-            ]);
-
-            const dataToday = await resToday.json();
-            const dataTomorrow = await resTomorrow.json();
-
-            const allLeagues = [...(dataToday.leagues || []), ...(dataTomorrow.leagues || [])];
-            let foundInApi = null;
-            const cleanQuery = query.replace(/\s+/g, '');
-
-            for (const league of allLeagues) {
-                if (!league.matches) continue;
-                const m = league.matches.find(x => 
-                    x.home.name.toLowerCase().replace(/\s+/g, '').includes(cleanQuery) || 
-                    x.away.name.toLowerCase().replace(/\s+/g, '').includes(cleanQuery)
-                );
-                if (m) {
-                    foundInApi = { m, leagueName: league.name };
-                    break;
-                }
-            }
-
-            if (foundInApi) {
-                const { m, leagueName } = foundInApi;
-                const scoreStr = (m.home.score !== undefined) ? `${m.home.score}-${m.away.score}` : "0-0";
-
-                match = await Match.findOneAndUpdate(
+    if (matches.length === 0) {
+        const res = await fetchFD("matches");
+        if (res.matches) {
+            for (const m of res.matches) {
+                await Match.findOneAndUpdate(
                     { fixtureId: m.id },
-                    { 
-                        home: m.home.name, away: m.away.name,
-                        league: leagueName, score: scoreStr,
-                        status: m.status.live ? "Live" : (m.status.reasonShort || "NS"),
+                    {
+                        home: m.homeTeam.name, away: m.awayTeam.name,
+                        league: m.competition.name, status: m.status,
+                        score: `${m.score.fullTime.home ?? 0}-${m.score.fullTime.away ?? 0}`,
                         lastUpdated: new Date()
-                    },
-                    { upsert: true, new: true }
+                    }, { upsert: true }
                 );
             }
-        } catch (err) {
-            console.error("Fetch Error:", err.message);
+            matches = await Match.find();
         }
     }
 
-    if (match) {
-        const keyboard = new InlineKeyboard().text("🔔 Noti ယူမည်", `sub_${match.fixtureId}`);
-        await ctx.reply(
-            `🏟️ *MATCH FOUND*\n\n🏆 ${match.league}\n🆚 ${match.home} vs ${match.away}\n🔢 Score: ${match.score}\n🕒 Status: ${match.status}\n\n_Last Updated: ${match.lastUpdated.toLocaleTimeString('en-GB')}_`,
-            { parse_mode: "Markdown", reply_markup: keyboard }
-        );
+    const fuse = new Fuse(matches, { keys: ["home", "away"], threshold: 0.4 });
+    const result = fuse.search(query);
+
+    if (result.length > 0) {
+        const m = result[0].item;
+        const kb = new InlineKeyboard().text("🔔 Noti ယူမည်", `sub_${m.fixtureId}`);
+        await ctx.reply(`🏟️ *MATCH FOUND*\n\n🏆 ${m.league}\n🆚 ${m.home} vs ${m.away}\n🔢 Score: ${m.score}\n🕒 Status: ${m.status}`, { parse_mode: "Markdown", reply_markup: kb });
     } else {
-        await ctx.reply(`🔍 "${ctx.message.text}" အတွက် ပွဲစဉ်ရှာမတွေ့ပါ။ \n(ဒီနေ့နဲ့ မနက်ဖြန် ပွဲစဉ်တွေကိုပဲ ရှာပေးနိုင်ပါတယ်ဗျ)`);
+        await ctx.reply("🔍 ပွဲစဉ်ရှာမတွေ့ပါ။");
     }
 });
 
