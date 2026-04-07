@@ -3,12 +3,13 @@ const { connectDB, Match, User } = require("../db");
 
 const bot = new Bot(process.env.BOT_TOKEN);
 const API_KEY = process.env.FOOTBALL_DATA_API_KEY;
-
 async function fetchFD(endpoint) {
+    console.log("Using API Key:", API_KEY ? "Key Found" : "Key Missing"); // ဒါလေး ထည့်စစ်ပါ
     try {
         const res = await fetch(`https://api.football-data.org/v4/${endpoint}`, {
             headers: { "X-Auth-Token": API_KEY }
         });
+
         
         const data = await res.json();
         
