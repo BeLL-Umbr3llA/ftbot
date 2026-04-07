@@ -1,6 +1,6 @@
 const { Bot, webhookCallback, InlineKeyboard } = require("grammy");
 const { connectDB, Match, User } = require("../db");
-
+const Fuse = require("fuse.js");
 const bot = new Bot(process.env.BOT_TOKEN);
 const API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 export default async function handler(req, res) {
