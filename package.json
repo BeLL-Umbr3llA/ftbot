@@ -1,7 +1,7 @@
 {
   "name": "football-live-bot",
-  "version": "1.0.0",
-  "description": "Football Live Score Telegram Bot with Goal Notifications",
+  "version": "1.1.0",
+  "description": "Football Live Score Bot for Vercel",
   "main": "api/index.js",
   "scripts": {
     "start": "node api/index.js",
@@ -11,13 +11,12 @@
     "grammy": "^1.21.1",
     "mongoose": "^8.2.0",
     "fuse.js": "^7.0.0",
-    "dotenv": "^16.4.5",
-    "node-fetch": "^3.3.2"
+    "dotenv": "^16.4.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
   },
   "engines": {
-    "node": "20.x"
+    "node": "24.x"
   }
 }
