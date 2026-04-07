@@ -5,12 +5,18 @@ const { connectDB, Match, User } = require("../db");
 const bot = new Bot(process.env.BOT_TOKEN);
 const API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 
-// API Fetch Helper
+// Football-Data API Fetch Helper
 async function fetchFD(endpoint) {
-    const res = await fetch(`https://api.football-data.org/v4/${endpoint}`, {
-        headers: { "X-Auth-Token": API_KEY }
-    });
-    return await res.json();
+    try {
+        const res = await fetch(`https://api.football-data.org/v4/${endpoint}`, {
+            headers: { "X-Auth-Token": API_KEY }
+        });
+        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+        return await res.json();
+    } catch (err) {
+        console.error("API Fetch Error:", err.message);
+        return null;
+    }
 }
 
 bot.command("start", (ctx) => ctx.reply("⚽ Football Bot မှ ကြိုဆိုပါတယ်!\n\n- /live : League အလိုက်ကြည့်ရန်\n- အသင်းနာမည်ရိုက်ပြီး ပွဲစဉ်ရှာရန်"));
@@ -31,8 +37,12 @@ bot.on("callback_query:data", async (ctx) => {
 
     if (data.startsWith("lv_")) {
         const code = data.split("_")[1];
+        // Live ပွဲတွေပဲ ဆွဲထုတ်မယ်
         const res = await fetchFD(`competitions/${code}/matches?status=LIVE`);
-        if (!res.matches?.length) return ctx.answerCallbackQuery("🏟️ Live ပွဲမရှိပါ။", { show_alert: true });
+        
+        if (!res || !res.matches?.length) {
+            return ctx.answerCallbackQuery("🏟️ လောလောဆယ် Live ပွဲမရှိပါ။", { show_alert: true });
+        }
 
         let msg = `⚽ *LIVE SCORES (${code})*\n\n`;
         const kb = new InlineKeyboard();
@@ -60,11 +70,13 @@ bot.on("message:text", async (ctx) => {
     const query = ctx.message.text.trim();
     if (query.startsWith("/")) return;
 
+    // DB မှာ ၁ မိနစ်အတွင်း data ရှိမရှိစစ်
     let matches = await Match.find({ lastUpdated: { $gte: new Date(Date.now() - 60000) } });
 
     if (matches.length === 0) {
-        const res = await fetchFD("matches");
-        if (res.matches) {
+        // endpoint ကို သေချာပြင်ထားပါတယ်
+        const res = await fetchFD("matches"); 
+        if (res && res.matches) {
             for (const m of res.matches) {
                 await Match.findOneAndUpdate(
                     { fixtureId: m.id },
