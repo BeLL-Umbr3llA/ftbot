@@ -142,4 +142,4 @@ bot.on("message:text", async (ctx) => {
     }
 });
 
-module.exports = webhookCallback(bot, "http"); //live ဆိုရင် လှလှပပ ဖတ်ကောင်းအောင် နားလည်အောင် league ပြ ဒီနေ့နဲ့ မနက်ဖန်ပွဲပြတာကို သေချာစစ် ပေး သဘက်ခါထိပါနေလားလို့  upcoming ခလုတ်ထည့်ပြီး user ကနှိပ်ရင် ၅ရက်စာပွဲတွေပြ leauge အလိုက် ဒီနေ့နဲ့ မနက်ဖန် ပွဲစဥ◌် အရေအတွက်ဘယ်လောက်ရှိလဲဆိုတာ leauge မနှိပ်ကတည်းကကြည့်ရအောင်လုပ် သေချာလုပ်ပေး
+module.exports = webhookCallback(bot, "http");
